@@ -24,6 +24,14 @@
   .short { position:relative; aspect-ratio:9/16; width:100%; background:#000; }
   .short iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
   .shot img { display:block; width:100%; height:auto; border:1px solid var(--line); }
+  article.long { display:block; }
+  article.long p, article.long .shot, article.long .refs { margin:0 0 1rem; }
+  article.long .shot { display:block; }
+  article.long .shot img { width:auto; max-width:100%; }
+  article.long .short { max-width:320px; margin:0 auto 1rem; }
+  article.long > :last-child { margin-bottom:0; }
+  .refs { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; align-items:start; }
+  article.long .refs .shot { margin:0; }
   @media (max-width:640px) { article { grid-template-columns:1fr; } .short { max-width:320px; margin:0 auto; } }
   a { color:var(--gold); }
 </style>
@@ -35,6 +43,36 @@
   <p><a href="https://ko-fi.com/rubimsworld/">Support us on Ko-fi</a> — that's where updates get posted.</p>
 </header>
 <main>
+
+  <div class="date">November 22, 2026</div>
+
+  <article class="long">
+    <h3>HOW DID I MAKE HAND ON BLENDER.</h3>
+    <p>I searched on pinterest: “hand drawing reference”, and did get some pictures:</p>
+    <div class="refs">
+      <a class="shot" href="site_data/22-11-2026_hand_00.jpg"><img src="site_data/22-11-2026_hand_00.jpg" alt="Hand drawing reference 1" width="661" height="855" loading="lazy"></a>
+      <a class="shot" href="site_data/22-11-2026_hand_01.jpg"><img src="site_data/22-11-2026_hand_01.jpg" alt="Hand drawing reference 2" width="499" height="835" loading="lazy"></a>
+      <a class="shot" href="site_data/22-11-2026_hand_02.jpg"><img src="site_data/22-11-2026_hand_02.jpg" alt="Hand drawing reference 3" width="550" height="386" loading="lazy"></a>
+      <a class="shot" href="site_data/22-11-2026_hand_03.jpg"><img src="site_data/22-11-2026_hand_03.jpg" alt="Hand drawing reference 4" width="392" height="1053" loading="lazy"></a>
+      <a class="shot" href="site_data/22-11-2026_hand_04.jpg"><img src="site_data/22-11-2026_hand_04.jpg" alt="Hand drawing reference 5" width="540" height="688" loading="lazy"></a>
+      <a class="shot" href="site_data/22-11-2026_hand_05.jpg"><img src="site_data/22-11-2026_hand_05.jpg" alt="Hand drawing reference 6" width="705" height="598" loading="lazy"></a>
+    </div>
+    <p>These are the ones I used as reference, I did a Low-Poly hands to fit the game aesthetic.</p>
+    <a class="shot" href="site_data/22-11-2026_hand_06.jpg"><img src="site_data/22-11-2026_hand_06.jpg" alt="The first low-poly hand in Blender" width="1406" height="1114" loading="lazy"></a>
+    <p>This is how it looked, working with UV Maps is hell, I don’t have the experience with it and no good result as helping me, so I iterate with ai until it gave that result. You can see the fingers are glued together. The community named it “Gorilla Hands”.</p>
+    <p>I did poses myself, but as the VR mod was become bigger, I need better poses and the fingers being together gave me a lot of issues, so I redid the model (this took 1 week+):</p>
+    <a class="shot" href="site_data/22-11-2026_hand_07.jpg"><img src="site_data/22-11-2026_hand_07.jpg" alt="The redone hand model" width="420" height="420" loading="lazy"></a>
+    <a class="shot" href="site_data/22-11-2026_hand_08.jpg"><img src="site_data/22-11-2026_hand_08.jpg" alt="Poses of the redone hand model" width="1430" height="845" loading="lazy"></a>
+    <p>The result was really bad in game, it was unusable.</p>
+    <p>So I’ve reverted to the OLD one, but still needed the fingers, I tried cutting it, but it was not looking like a hand, so I asked AI. Can you separate the pinky/middle etc..?</p>
+    <a class="shot" href="site_data/22-11-2026_hand_09.jpg"><img src="site_data/22-11-2026_hand_09.jpg" alt="The old hand with separated fingers" width="709" height="745" loading="lazy"></a>
+    <p>With the new HAND every old pose worked, but I need to do the armature on the fingers, with proper weights. So I asked AI to do the armature for the fingers, then I pose it in VR with Finger Tracking.</p>
+    <p><a href="https://www.youtube.com/shorts/409G3LFgJ5o">https://www.youtube.com/shorts/409G3LFgJ5o</a></p>
+    <div class="short"><iframe src="https://www.youtube.com/embed/409G3LFgJ5o" title="Posing the hand in VR with Finger Tracking" loading="lazy" allowfullscreen></iframe></div>
+    <p>As a bonus, here are some Swords.</p>
+    <p>One of these is made by me, the others are the same but with prompts to fix X or Y. Make the GUARD this way. The one done by me is the fp_1_to_1.</p>
+    <a class="shot" href="site_data/22-11-2026_hand_10.jpg"><img src="site_data/22-11-2026_hand_10.jpg" alt="Sword models" width="1299" height="1177" loading="lazy"></a>
+  </article>
 
   <div class="date">October 30, 2026</div>
 
