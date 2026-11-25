@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dark Project VR Item Fitter</title>
+<meta name="description" content="Place Thief's items in the VR hand and send the fits to Dark Project VR.">
+<style>
+:root {
+	--bg: #161514; --panel: #1f1d1b; --line: #34302b; --ink: #e8e2d6; --soft: #a49c8f;
+	--accent: #d9a54a; --warn: #e07a5f; --ok: #8fb573; --field: #12110f;
+}
+@media (prefers-color-scheme: light) { :root {
+	--bg: #f3efe7; --panel: #fbf8f2; --line: #d8d0c2; --ink: #2a251f; --soft: #6e665a;
+	--accent: #9a6a12; --warn: #b04a2f; --ok: #4d7a35; --field: #fff;
+} }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+	font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+#app { display: grid; grid-template-columns: 260px 1fr 330px; height: 100vh; }
+aside, #side { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column;
+	min-height: 0; padding: 12px; gap: 8px; }
+#side { border-right: 0; border-left: 1px solid var(--line); overflow-y: auto; }
+h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+h2 { font-size: 12px; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .08em; color: var(--soft); }
+.small { font-size: 12px; color: var(--soft); }
+button, select, input { font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line);
+	border-radius: 4px; padding: 4px 8px; }
+button { cursor: pointer; background: var(--panel); }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #1a1408; border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .45; cursor: default; }
+#filter { width: 100%; }
+#list { flex: 1; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--field); min-height: 0; }
+#list div { padding: 3px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#list div:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+#list div.sel { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+#list .mark { display: inline-block; width: 14px; color: var(--accent); }
+#list .name { color: var(--soft); }
+main { position: relative; min-width: 0; }
+canvas { display: block; width: 100%; height: 100%; }
+#views { position: absolute; top: 10px; left: 10px; display: flex; gap: 4px; flex-wrap: wrap; }
+#views button { font-size: 12px; padding: 2px 8px; opacity: .9; }
+#hint { position: absolute; bottom: 10px; left: 10px; right: 10px; font-size: 12px; color: var(--soft); pointer-events: none; }
+#welcome { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
+#welcome > div { max-width: 520px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
+#welcome p { margin: 8px 0; }
+.row { display: grid; grid-template-columns: 70px 1fr 26px 26px; gap: 4px; align-items: center; margin: 3px 0; }
+.row input { width: 100%; }
+.row button { padding: 2px 0; }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg button.on { border-color: var(--accent); color: var(--accent); }
+table.vals { width: 100%; border-collapse: collapse; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+table.vals td { padding: 1px 4px; border-top: 1px solid var(--line); }
+table.vals td:first-child { color: var(--soft); width: 64px; font-family: system-ui, sans-serif; }
+.changed { color: var(--accent); }
+#subs { font: 12px/1.5 ui-monospace, Consolas, monospace; background: var(--field); border: 1px solid var(--line);
+	border-radius: 4px; padding: 6px; max-height: 160px; overflow: auto; white-space: pre; }
+#status { min-height: 18px; }
+@media (max-width: 900px) {
+	#app { grid-template-columns: 1fr; grid-template-rows: 220px 55vh auto; height: auto; }
+	aside { border-right: 0; border-bottom: 1px solid var(--line); }
+	main { height: 55vh; }
+}
+</style>
+<script type="importmap">
+{ "imports": {
+	"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+	"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+<div id="app">
+	<aside>
+		<h1>Item Fitter</h1>
+		<div class="small">Dark Project VR. Place items in the hand; send your fits.</div>
+		<button id="open" class="primary">Open your Thief folder</button>
+		<div id="game" class="small"></div>
+		<input id="filter" placeholder="filter, or a model name + Enter">
+		<div id="list"></div>
+		<div class="small">* changed by you &nbsp; d has a shipped fit</div>
+	</aside>
+	<main>
+		<canvas id="view"></canvas>
+		<div id="views"></div>
+		<div id="hint">Drag to orbit, right-drag to pan, wheel to zoom. W move, E rotate, Q local/grip axes.</div>
+		<div id="welcome"><div>
+			<h1>Help fit Thief's items to the VR hand</h1>
+			<p>Open the folder Thief Gold or Thief 2 is installed in. The page reads the game's own
+			models from it, in your browser: nothing is uploaded, and no game file is hosted here.</p>
+			<p>Pick an item, move and turn it with the handles or the numbers until it sits in the hand
+			the way Garrett would hold it, then send your fits. Each one is reviewed before it ships.</p>
+			<p class="small">Chrome or Edge open the folder directly; other browsers ask you to pick it as an upload.</p>
+		</div></div>
+	</main>
+	<div id="side">
+		<h2>Item</h2>
+		<div id="title" class="small">Nothing picked yet.</div>
+		<h2>Hand</h2>
+		<div class="seg" id="hands"><button data-h="left">Left</button><button data-h="right" class="on">Right</button></div>
+		<div class="row" style="grid-template-columns:70px 1fr"><span>Pose</span><select id="pose"></select></div>
+		<h2>Place</h2>
+		<div class="seg" id="modes"><button data-m="translate" class="on">Move (W)</button><button data-m="rotate">Rotate (E)</button>
+			<button id="space">Axes: grip</button></div>
+		<div id="fields"></div>
+		<div class="seg" style="margin-top:6px"><button id="toDefault">Load shipped fit</button><button id="zero">Zero</button></div>
+		<table class="vals" id="vals"></table>
+		<h2>Your fits</h2>
+		<div id="subs" class="small">None yet: every item you change is listed here.</div>
+		<div class="seg" style="margin-top:6px">
+			<button id="send" class="primary" disabled>Send on GitHub</button>
+			<button id="copy" disabled>Copy</button>
+			<button id="clear" disabled>Clear</button>
+		</div>
+		<div class="small">Sending opens a GitHub issue with your fits filled in (a free GitHub account).</div>
+		<div id="status" class="small"></div>
+	</div>
+</div>
+<input id="pick" type="file" webkitdirectory hidden>
+<script type="module" src="app.js"></script>
+</body>
+</html>
