@@ -1,0 +1,1 @@
+{"verts": 10116, "tris": 3372, "blocks": [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16], "poses": {"None": 3, "Fist": 3, "Interact": 4, "Pinch": 5, "Hook": 6, "Flat": 7, "Cup": 8, "Key": 9, "Tripod": 10, "Wide": 11, "GripSmall": 13, "GripMedium": 14, "GripBig": 15, "Claw": 16}, "fist": 3, "grip_point": [-0.0008, -0.061, 0.0135], "hand_scale": 1.0}
