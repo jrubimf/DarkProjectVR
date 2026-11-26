@@ -42,3 +42,18 @@ export function unplace(M, t, mir) {
 		rot: [z(deg(p)), z(deg(y) * mir), z(deg(r) * mir)],
 	};
 }
+
+// src\comp\game\item_size.hpp: a pouch item a mission resized, against its tuned size.
+// ratio(obj Scale, archetype Scale, extents at the tuned size in metres, hold width) -> r per
+// model axis; it grows from the tuned size about FIST_AT or PINCH_AT (LEFT hand; right mirrors X).
+export const FIST_AT = [0.0008, -0.0610, 0.0135], PINCH_AT = [0.0197, -0.0564, -0.0125];
+export const FIST_W = 0.09, PINCH_W = 0.10;
+const middle = (a, b, c) => a + b + c - Math.max(a, b, c) - Math.min(a, b, c);
+export function sizeRatio(obj, arch, ext, hold) {
+	const r = [0, 1, 2].map(k => (arch[k] > 0 && obj[k] > 0 ? obj[k] / arch[k] : 1));
+	const w1 = middle(...ext), wr = middle(ext[0] * r[0], ext[1] * r[1], ext[2] * r[2]);
+	const cap = Math.max(w1, hold * HAND_SCALE), g = Math.max(...r);
+	let u = wr > cap && wr > 0 ? cap / wr : 1;
+	u = Math.max(Math.min(u, 2 / g), 0.5 / g);
+	return r.map(v => v * u);
+}

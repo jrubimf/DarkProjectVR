@@ -3,8 +3,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { parseLGMD, textureCandidates, decodePCX, readGamesys, parseObjnames } from './dark.js';
-import { place, unplace, T3 } from './place.js';
+import { parseLGMD, textureCandidates, decodePCX, readGamesys, parseObjnames, missionScales } from './dark.js';
+import { place, unplace, T3, sizeRatio, FIST_AT, PINCH_AT, FIST_W, PINCH_W } from './place.js';
 
 const REPO = 'jrubimf/DarkProjectVR';      // where fits are sent (issues) and published
 const $ = id => document.getElementById(id);
@@ -55,10 +55,13 @@ function fromUrl(base) {     // ?game=<url>: tools/web_fit_serve.py's /game/, fo
 
 // ---- state -------------------------------------------------------------------------------
 const S = {
-	set: 'tgold', crf: null, crfNames: null, sys: { scale: new Map(), name: new Map() },
+	set: 'tgold', crf: null, crfNames: null, sys: { scale: new Map(), scale3: new Map(), name: new Map() },
 	shipped: new Map(), models: [], current: null, mir: -1, pose: 'None',
 	fits: {},          // model -> { off, rot, sc, pose } the helper changed (drafts)
 	cache: new Map(),  // model -> loaded meshes
+	sizes: new Map(),  // model -> [{ v: [x, y, z], missions: [title] }]: Scales the missions put it at
+	size: null,        // the one being previewed, else the fitted size
+	ext: [0, 0, 0],    // the picked item's extents at its archetype Scale, metres
 };
 
 function parseIni(text) {
@@ -239,12 +242,30 @@ function toObject() {
 	itemObj.position.set(...p.t);
 	itemObj.quaternion.setFromRotationMatrix(m4);
 	itemObj.scale.setScalar(p.scale);
+	applySize();
+}
+function applySize() {
+	// A mission's size, drawn as the game draws a pouch item at it (comp::item_size): grown
+	// along the model's axes about the point of the hand holding it. The fit itself is unchanged.
+	const g = itemObj.children[0];
+	if (!g) return;
+	if (!S.size) { g.scale.setScalar(1); g.position.set(0, 0, 0); return; }
+	const f = fitOf(S.current);
+	const pinch = ['pinch', 'key', 'tripod'].includes(f.pose.toLowerCase());
+	const arch = S.sys.scale3.get(S.current) || [1, 1, 1];
+	const r = sizeRatio(S.size, arch, S.ext.map(v => v * itemObj.scale.x), pinch ? PINCH_W : FIST_W);
+	const at = pinch ? PINCH_AT : FIST_AT;
+	itemObj.updateMatrixWorld();
+	const pl = itemObj.worldToLocal(new THREE.Vector3(at[0] * S.mir, at[1], at[2]));
+	g.scale.set(...r);
+	g.position.set(pl.x * (1 - r[0]), pl.y * (1 - r[1]), pl.z * (1 - r[2]));
 }
 function fromObject() {
 	const e = new THREE.Matrix4().makeRotationFromQuaternion(itemObj.quaternion).elements;
 	const M = [[e[0], e[1], e[2]], [e[4], e[5], e[6]], [e[8], e[9], e[10]]];   // = (column matrix)^T
 	const back = unplace(M, itemObj.position.toArray(), S.mir);
 	setFit({ off: back.off, rot: back.rot, sc: itemObj.scale.x, pose: fitOf(S.current).pose }, false);
+	applySize();
 }
 
 function setFit(f, move = true) {
@@ -315,8 +336,12 @@ async function pick(m) {
 		status('loading ' + m + '...');
 		const it = await loadItem(m);
 		itemObj.clear();
+		it.group.scale.setScalar(1);
+		it.group.position.set(0, 0, 0);
+		S.ext = new THREE.Box3().setFromObject(it.group).getSize(new THREE.Vector3()).toArray();
 		itemObj.add(it.group);
 		gizmo.attach(itemObj);
+		fillSizes();
 		toObject();
 		const name = S.sys.name.get(m);
 		$('title').innerHTML = `<b>${m}</b>${name ? ' &middot; ' + name : ''}<br><span class="small">archetype Scale x${it.mul.toFixed(2)}</span>`;
@@ -328,6 +353,18 @@ async function pick(m) {
 		status(m + ': ' + e.message);
 	}
 }
+
+// The Scales the missions put this model at, to see the fit at each.
+function fillSizes() {
+	const list = S.sizes.get(S.current) || [];
+	const arch = S.sys.scale.get(S.current) ?? 1;
+	const txt = v => (v.every(x => x === v[0]) ? 'x' + v[0].toFixed(2) : v.map(x => x.toFixed(2)).join(' x '));
+	$('size').innerHTML = `<option value="">Fitted (archetype x${arch.toFixed(2)})</option>`
+		+ list.map((s, i) => `<option value="${i}">${txt(s.v)}: ${s.missions.join(', ')}</option>`).join('');
+	$('size').disabled = !list.length;
+	S.size = null;
+}
+$('size').addEventListener('change', e => { S.size = e.target.value === '' ? null : S.sizes.get(S.current)[e.target.value].v; toObject(); });
 
 $('pose').addEventListener('change', e => { const f = copyFit(fitOf(S.current)); f.pose = e.target.value; setFit(f); });
 $('hands').addEventListener('click', e => {
@@ -415,6 +452,31 @@ $('send').addEventListener('click', () => {
 });
 
 // ---- opening the game ----------------------------------------------------------------------
+// Every size each mission (miss1.mis .. miss30.mis in the folder) puts a model at, other
+// than its archetype's own, with the missions' titles (titles.str, else the file name).
+async function scanMissions(src, titles) {
+	const out = new Map();
+	for (let n = 1; n <= 30; n++) {
+		const u8 = await src.read(`miss${n}.mis`);
+		if (!u8) continue;
+		status(`reading miss${n}.mis...`);
+		let found;
+		try { found = missionScales(u8, S.sys.gam); } catch { continue; }
+		const title = titles.get('title_' + n) || `miss${n}`;
+		for (const [m, list] of found) {
+			const arch = S.sys.scale3.get(m) || [1, 1, 1];
+			for (const v of list) {
+				if (v.every((x, k) => Math.abs(x - arch[k]) < 0.05)) continue;
+				if (!out.has(m)) out.set(m, []);
+				const e = out.get(m).find(e => e.v.join() === v.join());
+				if (e) { if (!e.missions.includes(title)) e.missions.push(title); } else out.get(m).push({ v, missions: [title] });
+			}
+		}
+	}
+	for (const list of out.values()) list.sort((a, b) => Math.max(...a.v) - Math.max(...b.v));
+	return out;
+}
+
 async function openGame(src) {
 	status('reading ' + src.label + '...');
 	const crf = await src.read('RES/obj.crf') || await src.read('obj.crf');
@@ -424,15 +486,18 @@ async function openGame(src) {
 	S.crf.forEach((path, entry) => { if (!entry.dir) S.crfNames.set(path.toLowerCase(), entry); });
 	const t2 = !!(await src.read('thief2.exe') || await src.read('Thief2VR.exe'));
 	S.set = t2 ? 't2' : 'tgold';
-	let objnames = new Map();
+	let objnames = new Map(), titles = new Map();
 	const strings = await src.read('RES/strings.crf');
 	if (strings) {
 		const z = await JSZip.loadAsync(strings);
 		const f = Object.values(z.files).find(f => ['english/objnames.str', 'objnames.str'].includes(f.name.toLowerCase()));
 		if (f) objnames = parseObjnames(new TextDecoder('latin1').decode(await f.async('uint8array')));
+		const t = Object.values(z.files).find(f => ['english/titles.str', 'titles.str'].includes(f.name.toLowerCase()));
+		if (t) titles = parseObjnames(new TextDecoder('latin1').decode(await t.async('uint8array')));
 	}
 	const gam = await src.read('DARK.GAM');
 	if (gam) S.sys = readGamesys(gam, objnames);
+	S.sizes = gam ? await scanMissions(src, titles) : new Map();
 	S.shipped = parseIni(await (await fetch(`data/sets/${S.set}.ini`)).text());
 	const defaults = await (await fetch('data/items.json')).json();
 	const fromSet = [...S.shipped.keys()].filter(k => k.startsWith('item ') && !k.includes('#')).map(k => k.slice(5));

@@ -209,10 +209,7 @@ export function readGamesys(u8, objnames = new Map()) {
 
 	const scaleOf = (oid, depth = 0) => {
 		const r = scales.get(oid);
-		if (r && r.length >= 12) {
-			const dv = new DataView(r.buffer, r.byteOffset, 12);
-			return Math.max(dv.getFloat32(0, true), dv.getFloat32(4, true), dv.getFloat32(8, true));
-		}
+		if (r && r.length >= 12) return vec3(r);
 		if (depth > 12) return null;
 		for (const p of parents.get(oid) || []) { const s = scaleOf(p, depth + 1); if (s !== null) return s; }
 		return null;
@@ -220,13 +217,15 @@ export function readGamesys(u8, objnames = new Map()) {
 	// Several archetypes can name one model: the commonest Scale, the smallest on a tie.
 	const found = new Map();
 	for (const oid of models.keys()) {
-		const m = own(oid), s = scaleOf(oid);
-		if (m && s !== null && s > 0) { if (!found.has(m)) found.set(m, []); found.get(m).push(s); }
+		const m = own(oid), v = scaleOf(oid), s = v && Math.max(...v);
+		if (m && s > 0) { if (!found.has(m)) found.set(m, []); found.get(m).push([s, v]); }
 	}
-	const scale = new Map();
+	const scale = new Map(), scale3 = new Map();
 	for (const [m, list] of found) {
-		const count = v => list.filter(x => x === v).length;
-		scale.set(m, [...list].sort((a, b) => count(b) - count(a) || a - b)[0]);
+		const count = v => list.filter(x => x[0] === v).length;
+		const best = [...list].sort((a, b) => count(b[0]) - count(a[0]) || a[0] - b[0])[0];
+		scale.set(m, best[0]);
+		scale3.set(m, best[1]);
 	}
 
 	// Names: the inventory name of an archetype wearing the model (inherited), nearest the
@@ -253,5 +252,36 @@ export function readGamesys(u8, objnames = new Map()) {
 		if (label && (!b || rank < b[0] || (rank === b[0] && m[1] < b[1]))) best.set(m[0], [rank, m[1], label]);
 	}
 	const name = new Map([...best].map(([m, v]) => [m, v[2]]));
-	return { scale, name };
+	return { scale, scale3, name, gam: { models, scales, parents } };
+}
+
+const vec3 = r => { const dv = new DataView(r.buffer, r.byteOffset, 12); return [0, 4, 8].map(o => dv.getFloat32(o, true)); };
+
+// Every Scale one mission puts a model at: Map(model -> [x, y, z][]), distinct to 0.01. Each
+// object placed in the .mis, its own Scale else its archetype's (the mission's links and
+// properties over the gamesys's), 1 when none says.
+export function missionScales(u8, gam) {
+	const chunks = readTagFile(u8);
+	const models = new Map([...gam.models, ...records(chunks, 'P$ModelName')]);
+	const scales = new Map([...gam.scales, ...records(chunks, 'P$Scale')]);
+	const parents = new Map(gam.parents);
+	for (const [k, v] of metaParents(chunks)) parents.set(k, [...(parents.get(k) || []), ...v]);
+	const walk = (oid, rec, depth = 0) => {
+		if (rec.has(oid)) return rec.get(oid);
+		if (depth > 12) return null;
+		for (const p of parents.get(oid) || []) { const r = walk(p, rec, depth + 1); if (r) return r; }
+		return null;
+	};
+	const out = new Map();
+	for (const oid of parents.keys()) {
+		if (oid <= 0) continue;          // archetypes are negative; placed objects positive
+		const mr = walk(oid, models), sr = walk(oid, scales);
+		if (!mr) continue;
+		const v = (sr && sr.length >= 12 ? vec3(sr) : [1, 1, 1]).map(x => Math.round(x * 100) / 100);
+		if (!v.every(x => x > 0 && x < 100)) continue;     // junk Scales some missions carry
+		const m = cstr(mr, 0, mr.length).toLowerCase();
+		if (!out.has(m)) out.set(m, new Map());
+		out.get(m).set(v.join(','), v);
+	}
+	return new Map([...out].map(([m, s]) => [m, [...s.values()]]));
 }
