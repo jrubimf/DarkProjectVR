@@ -367,11 +367,36 @@ $('views').addEventListener('click', e => {
 });
 
 // ---- sending -------------------------------------------------------------------------------
+const fitIni = (m, f) => [`[item ${m}]`,
+	`Offset=${f.off.map(v => v.toFixed(2)).join(',')}`, `Rot=${f.rot.map(v => v.toFixed(2)).join(',')}`,
+	`Scale=${f.sc.toFixed(3)}`, `Pose=${f.pose}`].join('\n');
 function iniText() {
-	return Object.entries(S.fits).sort().map(([m, f]) => [`[item ${m}]`,
-		`Offset=${f.off.map(v => v.toFixed(2)).join(',')}`, `Rot=${f.rot.map(v => v.toFixed(2)).join(',')}`,
-		`Scale=${f.sc.toFixed(3)}`, `Pose=${f.pose}`].join('\n')).join('\n\n');
+	return Object.entries(S.fits).sort().map(([m, f]) => fitIni(m, f)).join('\n\n');
 }
+
+// Ctrl+C / Ctrl+V on the page (not in a text field or over selected text): the picked
+// item's fit as an [item] block, pasted onto another item after a confirm.
+const typing = () => ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName) || String(getSelection()) !== '';
+document.addEventListener('copy', e => {
+	if (typing() || !S.current) return;
+	e.preventDefault();
+	e.clipboardData.setData('text/plain', fitIni(S.current, fitOf(S.current)));
+	status('copied ' + S.current);
+});
+document.addEventListener('paste', e => {
+	if (typing() || !S.current) return;
+	const [name, sec] = [...parseIni(e.clipboardData.getData('text/plain'))].find(([, s]) => s.has('offset')) || [];
+	if (!sec) { status('paste: no [item] block with Offset= on the clipboard'); return; }
+	e.preventDefault();
+	const cur = fitOf(S.current);
+	const f = { off: nums(sec.get('offset'), 3, cur.off), rot: nums(sec.get('rot'), 3, cur.rot),
+		sc: Number(sec.get('scale')) || cur.sc,
+		pose: POSES.find(p => p.toLowerCase() === (sec.get('pose') || '').toLowerCase()) || cur.pose };
+	const from = name.replace(/^item\s+/, '');
+	if (!confirm(`Replace ${S.current}'s fit with ${from}'s?\n\n${fmt(f)}`)) return;
+	setFit(f);
+	status(`pasted ${from} onto ${S.current}`);
+});
 function showSubs() {
 	const n = Object.keys(S.fits).length;
 	$('subs').textContent = n ? iniText() : 'None yet: every item you change is listed here.';
