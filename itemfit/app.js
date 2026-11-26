@@ -356,15 +356,15 @@ async function pick(m) {
 
 // The Scales the missions put this model at, to see the fit at each.
 function fillSizes() {
-	const list = S.sizes.get(S.current) || [];
-	const arch = S.sys.scale.get(S.current) ?? 1;
+	const all = S.sizes.get(S.current) || [], list = all.filter(s => s.v);
+	const arch = S.sys.scale.get(S.current) ?? 1, normal = all.find(s => !s.v);
 	const txt = v => (v.every(x => x === v[0]) ? 'x' + v[0].toFixed(2) : v.map(x => x.toFixed(2)).join(' x '));
-	$('size').innerHTML = `<option value="">Fitted (archetype x${arch.toFixed(2)})</option>`
+	$('size').innerHTML = `<option value="">Normal x${arch.toFixed(2)}: ${normal ? normal.missions.join(', ') : 'in no mission'}</option>`
 		+ list.map((s, i) => `<option value="${i}">${txt(s.v)}: ${s.missions.join(', ')}</option>`).join('');
-	$('size').disabled = !list.length;
+	$('size').title = $('size').selectedOptions[0].textContent;
 	S.size = null;
 }
-$('size').addEventListener('change', e => { S.size = e.target.value === '' ? null : S.sizes.get(S.current)[e.target.value].v; toObject(); });
+$('size').addEventListener('change', e => { S.size = e.target.value === '' ? null : S.sizes.get(S.current).filter(s => s.v)[e.target.value].v; $('size').title = e.target.selectedOptions[0].textContent; toObject(); });
 
 $('pose').addEventListener('change', e => { const f = copyFit(fitOf(S.current)); f.pose = e.target.value; setFit(f); });
 $('hands').addEventListener('click', e => {
@@ -452,8 +452,8 @@ $('send').addEventListener('click', () => {
 });
 
 // ---- opening the game ----------------------------------------------------------------------
-// Every size each mission (miss1.mis .. miss30.mis in the folder) puts a model at, other
-// than its archetype's own, with the missions' titles (titles.str, else the file name).
+// Every size each mission (miss1.mis .. miss30.mis in the folder) puts a model at, with the
+// missions' titles (titles.str, else the file name); its archetype's own size is { v: null }.
 async function scanMissions(src, titles) {
 	const out = new Map();
 	for (let n = 1; n <= 30; n++) {
@@ -466,14 +466,14 @@ async function scanMissions(src, titles) {
 		for (const [m, list] of found) {
 			const arch = S.sys.scale3.get(m) || [1, 1, 1];
 			for (const v of list) {
-				if (v.every((x, k) => Math.abs(x - arch[k]) < 0.05)) continue;
+				const at = v.every((x, k) => Math.abs(x - arch[k]) < 0.05) ? null : v;
 				if (!out.has(m)) out.set(m, []);
-				const e = out.get(m).find(e => e.v.join() === v.join());
-				if (e) { if (!e.missions.includes(title)) e.missions.push(title); } else out.get(m).push({ v, missions: [title] });
+				const e = out.get(m).find(e => String(e.v) === String(at));
+				if (e) { if (!e.missions.includes(title)) e.missions.push(title); } else out.get(m).push({ v: at, missions: [title] });
 			}
 		}
 	}
-	for (const list of out.values()) list.sort((a, b) => Math.max(...a.v) - Math.max(...b.v));
+	for (const list of out.values()) list.sort((a, b) => (a.v ? Math.max(...a.v) : 0) - (b.v ? Math.max(...b.v) : 0));
 	return out;
 }
 
