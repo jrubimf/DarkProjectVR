@@ -57,7 +57,7 @@ function fromUrl(base) {     // ?game=<url>: tools/web_fit_serve.py's /game/, fo
 const S = {
 	set: 'tgold', crf: null, crfNames: null, sys: { scale: new Map(), scale3: new Map(), name: new Map() },
 	shipped: new Map(), models: [], current: null, mir: -1, pose: 'None',
-	fits: {},          // model -> { off, rot, sc, pose } the helper changed (drafts)
+	fits: {},          // model -> { off, rot, sc, pose, weapon } the helper changed (drafts)
 	cache: new Map(),  // model -> loaded meshes
 	sizes: new Map(),  // model -> [{ v: [x, y, z], missions: [title] }]: Scales the missions put it at
 	size: null,        // the one being previewed, else the fitted size
@@ -85,11 +85,15 @@ function shippedFit(m) {
 	return {
 		off: nums(s?.get('offset'), 3, [0, 0, 0]), rot: nums(s?.get('rot'), 3, [0, 0, 0]),
 		sc: Number.isFinite(Number(s?.get('scale'))) && s?.get('scale') ? Number(s.get('scale')) : 1,
-		pose: POSES.find(p => p.toLowerCase() === (s?.get('pose') || 'none').toLowerCase()) || 'None', found: !!s,
+		pose: POSES.find(p => p.toLowerCase() === (s?.get('pose') || 'none').toLowerCase()) || 'None',
+		weapon: weaponOf(s?.get('weapon')), found: !!s,
 	};
 }
 const fitOf = m => S.fits[m] || shippedFit(m);
-const same = (a, b) => a.pose === b.pose && Math.abs(a.sc - b.sc) < 5e-4
+// Weapon=: held, the item fights as the sword or the blackjack (vr_melee). None is the absent key.
+const WEAPONS = ['None', 'Sword', 'Blackjack'];
+const weaponOf = v => WEAPONS.find(w => w.toLowerCase() === (v || '').toLowerCase()) || 'None';
+const same = (a, b) => a.pose === b.pose && (a.weapon || 'None') === (b.weapon || 'None') && Math.abs(a.sc - b.sc) < 5e-4
 	&& [0, 1, 2].every(k => Math.abs(a.off[k] - b.off[k]) < 5e-3 && Math.abs(a.rot[k] - b.rot[k]) < 0.05);
 
 // ---- three.js ----------------------------------------------------------------------------
@@ -264,7 +268,7 @@ function fromObject() {
 	const e = new THREE.Matrix4().makeRotationFromQuaternion(itemObj.quaternion).elements;
 	const M = [[e[0], e[1], e[2]], [e[4], e[5], e[6]], [e[8], e[9], e[10]]];   // = (column matrix)^T
 	const back = unplace(M, itemObj.position.toArray(), S.mir);
-	setFit({ off: back.off, rot: back.rot, sc: itemObj.scale.x, pose: fitOf(S.current).pose }, false);
+	setFit({ off: back.off, rot: back.rot, sc: itemObj.scale.x, pose: fitOf(S.current).pose, weapon: fitOf(S.current).weapon }, false);
 	applySize();
 }
 
@@ -272,7 +276,7 @@ function setFit(f, move = true) {
 	const m = S.current;
 	if (!m) return;
 	const r = v => Math.round(v * 100) / 100;
-	f = { off: f.off.map(r), rot: f.rot.map(v => Math.round(v * 10) / 10), sc: Math.round(f.sc * 1000) / 1000, pose: f.pose };
+	f = { off: f.off.map(r), rot: f.rot.map(v => Math.round(v * 10) / 10), sc: Math.round(f.sc * 1000) / 1000, pose: f.pose, weapon: weaponOf(f.weapon) };
 	if (same(f, shippedFit(m))) delete S.fits[m];
 	else S.fits[m] = f;
 	store.set('itemfit:' + S.set, S.fits);
@@ -288,7 +292,7 @@ const FIELDS = [['X cm', 'off', 0, 0.5], ['Y cm', 'off', 1, 0.5], ['Z cm', 'off'
 $('fields').innerHTML = FIELDS.map(([l, k, i], n) =>
 	`<div class="row"><span>${l}</span><input id="f${n}" type="number" step="any"><button data-n="${n}" data-d="-1">-</button><button data-n="${n}" data-d="1">+</button></div>`).join('');
 const readField = (f, n, v) => { const [, k, i] = FIELDS[n]; if (k === 'sc') f.sc = Math.max(0.01, v); else f[k][i] = v; };
-const copyFit = f => ({ off: [...f.off], rot: [...f.rot], sc: f.sc, pose: f.pose });
+const copyFit = f => ({ off: [...f.off], rot: [...f.rot], sc: f.sc, pose: f.pose, weapon: f.weapon });
 FIELDS.forEach((_, n) => {
 	$('f' + n).addEventListener('change', e => { const f = copyFit(fitOf(S.current)); readField(f, n, Number(e.target.value) || 0); setFit(f); });
 });
@@ -300,13 +304,14 @@ $('fields').addEventListener('click', e => {
 	readField(f, n, (k === 'sc' ? f.sc : f[k][i]) + d * step);
 	setFit(f);
 });
-const fmt = f => `${f.off.map(v => v.toFixed(2)).join(', ')} | ${f.rot.map(v => v.toFixed(1)).join(', ')} | ${f.sc.toFixed(3)} | ${f.pose}`;
+const fmt = f => `${f.off.map(v => v.toFixed(2)).join(', ')} | ${f.rot.map(v => v.toFixed(1)).join(', ')} | ${f.sc.toFixed(3)} | ${f.pose}${f.weapon && f.weapon !== 'None' ? ' | fights as ' + f.weapon.toLowerCase() : ''}`;
 function showFit() {
 	const m = S.current;
 	if (!m) return;
 	const f = fitOf(m), d = shippedFit(m);
 	FIELDS.forEach(([, k, i], n) => { $('f' + n).value = k === 'sc' ? f.sc : f[k][i]; });
 	$('pose').value = f.pose;
+	$('weapon').value = weaponOf(f.weapon);
 	if (S.pose !== f.pose) { S.pose = f.pose; poseHand(); }
 	$('vals').innerHTML = `<tr><td>Shipped</td><td>${d.found ? fmt(d) : 'none yet (drawn at zero)'}</td></tr>`
 		+ `<tr><td>Yours</td><td class="${S.fits[m] ? 'changed' : ''}">${S.fits[m] ? fmt(f) : 'same as shipped'}</td></tr>`;
@@ -367,6 +372,8 @@ function fillSizes() {
 $('size').addEventListener('change', e => { S.size = e.target.value === '' ? null : S.sizes.get(S.current).filter(s => s.v)[e.target.value].v; $('size').title = e.target.selectedOptions[0].textContent; toObject(); });
 
 $('pose').addEventListener('change', e => { const f = copyFit(fitOf(S.current)); f.pose = e.target.value; setFit(f); });
+$('weapon').innerHTML = WEAPONS.map(w => `<option>${w}</option>`).join('');
+$('weapon').addEventListener('change', e => { if (!S.current) return; const f = copyFit(fitOf(S.current)); f.weapon = e.target.value; setFit(f); });
 $('hands').addEventListener('click', e => {
 	const b = e.target.closest('button');
 	if (!b) return;
@@ -388,7 +395,7 @@ addEventListener('keydown', e => {
 	if (e.key === 'q') $('space').click();
 });
 $('toDefault').addEventListener('click', () => { if (S.current) { delete S.fits[S.current]; setFit(shippedFit(S.current)); } });
-$('zero').addEventListener('click', () => { if (S.current) setFit({ off: [0, 0, 0], rot: [0, 0, 0], sc: 1, pose: fitOf(S.current).pose }); });
+$('zero').addEventListener('click', () => { if (S.current) setFit({ off: [0, 0, 0], rot: [0, 0, 0], sc: 1, pose: fitOf(S.current).pose, weapon: fitOf(S.current).weapon }); });
 
 // Camera presets, as tools/itemfit_gui.py's views: the palm is -X on the right hand.
 const VIEWS = [['Palm', () => [S.mir, 0, 0]], ['Back', () => [-S.mir, 0, 0]], ['Tube', () => [0, 0, 1]],
@@ -406,7 +413,7 @@ $('views').addEventListener('click', e => {
 // ---- sending -------------------------------------------------------------------------------
 const fitIni = (m, f) => [`[item ${m}]`,
 	`Offset=${f.off.map(v => v.toFixed(2)).join(',')}`, `Rot=${f.rot.map(v => v.toFixed(2)).join(',')}`,
-	`Scale=${f.sc.toFixed(3)}`, `Pose=${f.pose}`].join('\n');
+	`Scale=${f.sc.toFixed(3)}`, `Pose=${f.pose}`, ...(f.weapon && (f.weapon !== 'None' || shippedFit(m).weapon !== 'None') ? [`Weapon=${f.weapon}`] : [])].join('\n');
 function iniText() {
 	return Object.entries(S.fits).sort().map(([m, f]) => fitIni(m, f)).join('\n\n');
 }
@@ -428,7 +435,8 @@ document.addEventListener('paste', e => {
 	const cur = fitOf(S.current);
 	const f = { off: nums(sec.get('offset'), 3, cur.off), rot: nums(sec.get('rot'), 3, cur.rot),
 		sc: Number(sec.get('scale')) || cur.sc,
-		pose: POSES.find(p => p.toLowerCase() === (sec.get('pose') || '').toLowerCase()) || cur.pose };
+		pose: POSES.find(p => p.toLowerCase() === (sec.get('pose') || '').toLowerCase()) || cur.pose,
+		weapon: sec.has('weapon') ? weaponOf(sec.get('weapon')) : cur.weapon };
 	const from = name.replace(/^item\s+/, '');
 	if (!confirm(`Replace ${S.current}'s fit with ${from}'s?\n\n${fmt(f)}`)) return;
 	setFit(f);
