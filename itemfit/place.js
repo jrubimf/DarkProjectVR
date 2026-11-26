@@ -1,7 +1,9 @@
 // Where the game draws a held item, as tools/itemfit.py place_matrix: grip space, row
 // vectors (D3DX), vertex' = (V * mul) @ (scale * BASIS @ rot) + trans, with the shared
 // [Items] trim at zero (the shipped fits are made at zero). Offsets are stored for the
-// LEFT hand; the right hand mirrors offset X, yaw and roll.
+// LEFT hand; the right hand mirrors offset X, yaw and roll. Fits are made looking at the right
+// hand, so the left is the derived one: it also turns the item to reflect it across the axis it
+// is symmetric in (mirrorAxis), which plain mirroring only gets right for one symmetric in Y.
 
 export const HAND_SCALE = 1.0;          // [VR] HandScale default
 // Dark props are z-up, +X forward; the game turns them into the grip: X -> -Z, Y -> -X, Z -> +Y.
@@ -24,16 +26,56 @@ export function decomposeYPR(m) {
 	return [Math.atan2(-m[0][2], m[0][0]), p, 0];
 }
 
-// The place as a rotation M (row vectors, = BASIS @ rot), a uniform scale and a translation,
-// for the hand `mir` (+1 left, -1 right).
-export function place(off, rot, sc, mir) {
+// The model axis (0 X, 1 Y, 2 Z) a mesh is most nearly symmetric across, through the middle of
+// its box: src\comp\modules\dark_model.cpp mirror_axis and tools/itemfit.py mirror_axis, which
+// this must agree with. `pos` is x,y,z per vertex, `tris` the vertex indices the faces use. The
+// corners once each (to 10 um); each reflected across the plane, its distance to the nearest
+// corner, averaged, over the box diagonal. Y unless another axis beats it by more than 0.002.
+export function mirrorAxis(pos, tris) {
+	const seen = new Set(), P = [];
+	for (const i of tris) {
+		const q = [0, 1, 2].map(k => Math.round(pos[i * 3 + k] * 1e5));
+		const key = q.join(',');
+		if (!seen.has(key)) { seen.add(key); P.push(q.map(v => v * 1e-5)); }
+	}
+	if (P.length < 2) return 1;
+	const lo = [0, 1, 2].map(k => Math.min(...P.map(v => v[k]))), hi = [0, 1, 2].map(k => Math.max(...P.map(v => v[k])));
+	const diag = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+	if (!(diag > 0)) return 1;
+	const score = [0, 1, 2].map(k => {
+		let sum = 0;
+		for (const v of P) {
+			const r = [...v];
+			r[k] = lo[k] + hi[k] - r[k];
+			let best = Infinity;
+			for (const w of P) best = Math.min(best, (r[0] - w[0]) ** 2 + (r[1] - w[1]) ** 2 + (r[2] - w[2]) ** 2);
+			sum += Math.sqrt(best);
+		}
+		return sum / P.length / diag;
+	});
+	let best = 0;
+	for (let k = 1; k < 3; k++) if (score[k] < score[best]) best = k;
+	return score[1] <= score[best] + 0.002 ? 1 : best;
+}
+
+// The left hand reflects the item across its symmetric axis, not always Y: mirroring the place
+// reflects the model in Y, and Y times the reflection in `axis` is a half turn about the third
+// (model side, row vectors; identity for Y).
+export const mirrorTurn = axis => axis === 0 ? [[-1, 0, 0], [0, -1, 0], [0, 0, 1]]
+	: axis === 2 ? [[1, 0, 0], [0, -1, 0], [0, 0, -1]] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
+// The place as a rotation M (row vectors, = BASIS @ rot, after mirrorTurn in the left hand), a
+// uniform scale and a translation, for the hand `mir` (+1 left, -1 right).
+export function place(off, rot, sc, mir, axis = 1) {
 	const r = yawPitchRoll(rad(rot[1] * mir), rad(rot[0]), rad(rot[2] * mir));
 	const k = 0.01 * HAND_SCALE;
-	return { M: mul3(BASIS, r), scale: sc, t: [off[0] * k * mir, off[1] * k, off[2] * k] };
+	const M = mul3(BASIS, r);
+	return { M: mir > 0 ? mul3(mirrorTurn(axis), M) : M, scale: sc, t: [off[0] * k * mir, off[1] * k, off[2] * k] };
 }
 
 // Back from a rotation M (row vectors) and a translation to the numbers a fit stores.
-export function unplace(M, t, mir) {
+export function unplace(M, t, mir, axis = 1) {
+	if (mir > 0) M = mul3(mirrorTurn(axis), M);     // the turn is its own inverse
 	const [y, p, r] = decomposeYPR(mul3(T3(BASIS), M));
 	const k = 0.01 * HAND_SCALE;
 	const z = v => (Math.abs(v) < 5e-4 ? 0 : v);

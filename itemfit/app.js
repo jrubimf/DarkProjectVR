@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { parseLGMD, textureCandidates, decodePCX, readGamesys, parseObjnames, missionScales } from './dark.js';
-import { place, unplace, T3, sizeRatio, FIST_AT, PINCH_AT, FIST_W, PINCH_W } from './place.js';
+import { place, unplace, mirrorAxis, T3, sizeRatio, FIST_AT, PINCH_AT, FIST_W, PINCH_W } from './place.js';
 
 const REPO = 'jrubimf/DarkProjectVR';      // where fits are sent (issues) and published
 const $ = id => document.getElementById(id);
@@ -57,7 +57,7 @@ function fromUrl(base) {     // ?game=<url>: tools/web_fit_serve.py's /game/, fo
 const S = {
 	set: 'tgold', crf: null, crfNames: null, sys: { scale: new Map(), scale3: new Map(), name: new Map() },
 	shipped: new Map(), models: [], current: null, mir: -1, pose: 'None',
-	fits: {},          // model -> { off, rot, sc, pose, weapon } the helper changed (drafts)
+	fits: {},          // model -> { off, rot, sc, pose, weapon, mirror } the helper changed (drafts)
 	cache: new Map(),  // model -> loaded meshes
 	sizes: new Map(),  // model -> [{ v: [x, y, z], missions: [title] }]: Scales the missions put it at
 	size: null,        // the one being previewed, else the fitted size
@@ -86,14 +86,20 @@ function shippedFit(m) {
 		off: nums(s?.get('offset'), 3, [0, 0, 0]), rot: nums(s?.get('rot'), 3, [0, 0, 0]),
 		sc: Number.isFinite(Number(s?.get('scale'))) && s?.get('scale') ? Number(s.get('scale')) : 1,
 		pose: POSES.find(p => p.toLowerCase() === (s?.get('pose') || 'none').toLowerCase()) || 'None',
-		weapon: weaponOf(s?.get('weapon')), found: !!s,
+		weapon: weaponOf(s?.get('weapon')), mirror: mirrorOf(s?.get('mirroraxis')), found: !!s,
 	};
 }
 const fitOf = m => S.fits[m] || shippedFit(m);
 // Weapon=: held, the item fights as the sword or the blackjack (vr_melee). None is the absent key.
 const WEAPONS = ['None', 'Sword', 'Blackjack'];
 const weaponOf = v => WEAPONS.find(w => w.toLowerCase() === (v || '').toLowerCase()) || 'None';
-const same = (a, b) => a.pose === b.pose && (a.weapon || 'None') === (b.weapon || 'None') && Math.abs(a.sc - b.sc) < 5e-4
+// MirrorAxis=: the model axis the item is reflected across in the left hand. Auto, the absent key,
+// is the mesh's own (place.js mirrorAxis); X, Y or Z for a model that measures wrong.
+const MIRRORS = ['Auto', 'X', 'Y', 'Z'];
+const mirrorOf = v => MIRRORS.find(w => w.toLowerCase() === (v || '').toLowerCase()) || 'Auto';
+const axisOf = (m, f) => { const i = MIRRORS.indexOf(mirrorOf(f.mirror)) - 1; return i >= 0 ? i : S.cache.get(m)?.axis ?? 1; };
+const same = (a, b) => a.pose === b.pose && (a.weapon || 'None') === (b.weapon || 'None')
+	&& mirrorOf(a.mirror) === mirrorOf(b.mirror) && Math.abs(a.sc - b.sc) < 5e-4
 	&& [0, 1, 2].every(k => Math.abs(a.off[k] - b.off[k]) < 5e-3 && Math.abs(a.rot[k] - b.rot[k]) < 0.05);
 
 // ---- three.js ----------------------------------------------------------------------------
@@ -231,7 +237,8 @@ async function loadItem(m) {
 			color: map ? 0xffffff : new THREE.Color(c[0] / 255, c[1] / 255, c[2] / 255).convertSRGBToLinear() });
 		group.add(new THREE.Mesh(geo, mat));
 	}
-	const out = { group, mul };
+	// The axis it is symmetric in, for the left hand's mirror (as the game measures it).
+	const out = { group, mul, axis: mirrorAxis(model.pos, model.parts.flatMap(p => p.tris.map(([vi]) => vi))) };
 	S.cache.set(m, out);
 	return out;
 }
@@ -239,7 +246,7 @@ async function loadItem(m) {
 // ---- the place <-> the object --------------------------------------------------------------
 function toObject() {
 	const f = fitOf(S.current);
-	const p = place(f.off, f.rot, f.sc, S.mir);
+	const p = place(f.off, f.rot, f.sc, S.mir, axisOf(S.current, f));
 	const M = p.M;      // row vectors: three's column matrix is its transpose
 	const m4 = new THREE.Matrix4().set(M[0][0], M[1][0], M[2][0], 0, M[0][1], M[1][1], M[2][1], 0,
 		M[0][2], M[1][2], M[2][2], 0, 0, 0, 0, 1);
@@ -267,8 +274,9 @@ function applySize() {
 function fromObject() {
 	const e = new THREE.Matrix4().makeRotationFromQuaternion(itemObj.quaternion).elements;
 	const M = [[e[0], e[1], e[2]], [e[4], e[5], e[6]], [e[8], e[9], e[10]]];   // = (column matrix)^T
-	const back = unplace(M, itemObj.position.toArray(), S.mir);
-	setFit({ off: back.off, rot: back.rot, sc: itemObj.scale.x, pose: fitOf(S.current).pose, weapon: fitOf(S.current).weapon }, false);
+	const cur = fitOf(S.current);
+	const back = unplace(M, itemObj.position.toArray(), S.mir, axisOf(S.current, cur));
+	setFit({ off: back.off, rot: back.rot, sc: itemObj.scale.x, pose: cur.pose, weapon: cur.weapon, mirror: cur.mirror }, false);
 	applySize();
 }
 
@@ -276,7 +284,7 @@ function setFit(f, move = true) {
 	const m = S.current;
 	if (!m) return;
 	const r = v => Math.round(v * 100) / 100;
-	f = { off: f.off.map(r), rot: f.rot.map(v => Math.round(v * 10) / 10), sc: Math.round(f.sc * 1000) / 1000, pose: f.pose, weapon: weaponOf(f.weapon) };
+	f = { off: f.off.map(r), rot: f.rot.map(v => Math.round(v * 10) / 10), sc: Math.round(f.sc * 1000) / 1000, pose: f.pose, weapon: weaponOf(f.weapon), mirror: mirrorOf(f.mirror) };
 	if (same(f, shippedFit(m))) delete S.fits[m];
 	else S.fits[m] = f;
 	store.set('itemfit:' + S.set, S.fits);
@@ -292,7 +300,7 @@ const FIELDS = [['X cm', 'off', 0, 0.5], ['Y cm', 'off', 1, 0.5], ['Z cm', 'off'
 $('fields').innerHTML = FIELDS.map(([l, k, i], n) =>
 	`<div class="row"><span>${l}</span><input id="f${n}" type="number" step="any"><button data-n="${n}" data-d="-1">-</button><button data-n="${n}" data-d="1">+</button></div>`).join('');
 const readField = (f, n, v) => { const [, k, i] = FIELDS[n]; if (k === 'sc') f.sc = Math.max(0.01, v); else f[k][i] = v; };
-const copyFit = f => ({ off: [...f.off], rot: [...f.rot], sc: f.sc, pose: f.pose, weapon: f.weapon });
+const copyFit = f => ({ off: [...f.off], rot: [...f.rot], sc: f.sc, pose: f.pose, weapon: f.weapon, mirror: f.mirror });
 FIELDS.forEach((_, n) => {
 	$('f' + n).addEventListener('change', e => { const f = copyFit(fitOf(S.current)); readField(f, n, Number(e.target.value) || 0); setFit(f); });
 });
@@ -304,7 +312,7 @@ $('fields').addEventListener('click', e => {
 	readField(f, n, (k === 'sc' ? f.sc : f[k][i]) + d * step);
 	setFit(f);
 });
-const fmt = f => `${f.off.map(v => v.toFixed(2)).join(', ')} | ${f.rot.map(v => v.toFixed(1)).join(', ')} | ${f.sc.toFixed(3)} | ${f.pose}${f.weapon && f.weapon !== 'None' ? ' | fights as ' + f.weapon.toLowerCase() : ''}`;
+const fmt = f => `${f.off.map(v => v.toFixed(2)).join(', ')} | ${f.rot.map(v => v.toFixed(1)).join(', ')} | ${f.sc.toFixed(3)} | ${f.pose}${f.weapon && f.weapon !== 'None' ? ' | fights as ' + f.weapon.toLowerCase() : ''}${mirrorOf(f.mirror) !== 'Auto' ? ' | left mirrors ' + f.mirror : ''}`;
 function showFit() {
 	const m = S.current;
 	if (!m) return;
@@ -312,6 +320,7 @@ function showFit() {
 	FIELDS.forEach(([, k, i], n) => { $('f' + n).value = k === 'sc' ? f.sc : f[k][i]; });
 	$('pose').value = f.pose;
 	$('weapon').value = weaponOf(f.weapon);
+	showMirror(m, f);
 	if (S.pose !== f.pose) { S.pose = f.pose; poseHand(); }
 	$('vals').innerHTML = `<tr><td>Shipped</td><td>${d.found ? fmt(d) : 'none yet (drawn at zero)'}</td></tr>`
 		+ `<tr><td>Yours</td><td class="${S.fits[m] ? 'changed' : ''}">${S.fits[m] ? fmt(f) : 'same as shipped'}</td></tr>`;
@@ -374,6 +383,13 @@ $('size').addEventListener('change', e => { S.size = e.target.value === '' ? nul
 $('pose').addEventListener('change', e => { const f = copyFit(fitOf(S.current)); f.pose = e.target.value; setFit(f); });
 $('weapon').innerHTML = WEAPONS.map(w => `<option>${w}</option>`).join('');
 $('weapon').addEventListener('change', e => { if (!S.current) return; const f = copyFit(fitOf(S.current)); f.weapon = e.target.value; setFit(f); });
+// Auto names the axis it measured, so a wrong one is plain to see.
+function showMirror(m, f) {
+	const measured = 'XYZ'[S.cache.get(m)?.axis ?? 1];
+	$('mirror').innerHTML = MIRRORS.map(w => `<option value="${w}">${w === 'Auto' ? `Auto (${measured})` : w}</option>`).join('');
+	$('mirror').value = mirrorOf(f.mirror);
+}
+$('mirror').addEventListener('change', e => { if (!S.current) return; const f = copyFit(fitOf(S.current)); f.mirror = e.target.value; setFit(f); });
 $('hands').addEventListener('click', e => {
 	const b = e.target.closest('button');
 	if (!b) return;
@@ -395,7 +411,7 @@ addEventListener('keydown', e => {
 	if (e.key === 'q') $('space').click();
 });
 $('toDefault').addEventListener('click', () => { if (S.current) { delete S.fits[S.current]; setFit(shippedFit(S.current)); } });
-$('zero').addEventListener('click', () => { if (S.current) setFit({ off: [0, 0, 0], rot: [0, 0, 0], sc: 1, pose: fitOf(S.current).pose, weapon: fitOf(S.current).weapon }); });
+$('zero').addEventListener('click', () => { if (S.current) setFit({ off: [0, 0, 0], rot: [0, 0, 0], sc: 1, pose: fitOf(S.current).pose, weapon: fitOf(S.current).weapon, mirror: fitOf(S.current).mirror }); });
 
 // Camera presets, as tools/itemfit_gui.py's views: the palm is -X on the right hand.
 const VIEWS = [['Palm', () => [S.mir, 0, 0]], ['Back', () => [-S.mir, 0, 0]], ['Tube', () => [0, 0, 1]],
@@ -413,7 +429,8 @@ $('views').addEventListener('click', e => {
 // ---- sending -------------------------------------------------------------------------------
 const fitIni = (m, f) => [`[item ${m}]`,
 	`Offset=${f.off.map(v => v.toFixed(2)).join(',')}`, `Rot=${f.rot.map(v => v.toFixed(2)).join(',')}`,
-	`Scale=${f.sc.toFixed(3)}`, `Pose=${f.pose}`, ...(f.weapon && (f.weapon !== 'None' || shippedFit(m).weapon !== 'None') ? [`Weapon=${f.weapon}`] : [])].join('\n');
+	`Scale=${f.sc.toFixed(3)}`, `Pose=${f.pose}`, ...(f.weapon && (f.weapon !== 'None' || shippedFit(m).weapon !== 'None') ? [`Weapon=${f.weapon}`] : []),
+	...(mirrorOf(f.mirror) !== 'Auto' || shippedFit(m).mirror !== 'Auto' ? [`MirrorAxis=${mirrorOf(f.mirror)}`] : [])].join('\n');
 function iniText() {
 	return Object.entries(S.fits).sort().map(([m, f]) => fitIni(m, f)).join('\n\n');
 }
@@ -436,7 +453,8 @@ document.addEventListener('paste', e => {
 	const f = { off: nums(sec.get('offset'), 3, cur.off), rot: nums(sec.get('rot'), 3, cur.rot),
 		sc: Number(sec.get('scale')) || cur.sc,
 		pose: POSES.find(p => p.toLowerCase() === (sec.get('pose') || '').toLowerCase()) || cur.pose,
-		weapon: sec.has('weapon') ? weaponOf(sec.get('weapon')) : cur.weapon };
+		weapon: sec.has('weapon') ? weaponOf(sec.get('weapon')) : cur.weapon,
+		mirror: sec.has('mirroraxis') ? mirrorOf(sec.get('mirroraxis')) : cur.mirror };
 	const from = name.replace(/^item\s+/, '');
 	if (!confirm(`Replace ${S.current}'s fit with ${from}'s?\n\n${fmt(f)}`)) return;
 	setFit(f);
